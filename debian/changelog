@@ -1,3 +1,10 @@
+openbsc (0.14.0-fw.4) trusty; urgency=low
+
+  * Added ussd-proxy
+  * New package for reg-proxy & ussd-proxy
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Tue, 27 Oct 2015 18:43:01 +0200
+
 openbsc (0.14.0-fw.3) trusty; urgency=low
 
   * Implemented meas_feed v1 API to send channel information along with
@@ -32,7 +39,7 @@ openbsc (0.12.0+git26-7) unstable; urgency=low
 
 openbsc (0.12.0+git26-6) precise; urgency=low
 
-  * Added init script for osmocom-sgsn. 
+  * Added init script for osmocom-sgsn.
 
  -- Eric Butler <eric@codebutler.com>  Fri, 24 Aug 2012 21:04:32 -0700
 
