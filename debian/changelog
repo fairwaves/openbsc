@@ -1,3 +1,10 @@
+openbsc (0.14.0-fw.5) trusty; urgency=low
+
+  * ussd_proxy: fix reject after resultLast
+  * added -l parameter to set log level
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Tue, 27 Oct 2015 20:20:58 +0200
+
 openbsc (0.14.0-fw.4) trusty; urgency=low
 
   * Added ussd-proxy
