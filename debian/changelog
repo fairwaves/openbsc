@@ -1,3 +1,10 @@
+openbsc (0.14.0-fw.6) trusty; urgency=low
+
+  * libmsc: use message type as an entry point and handle release complete message
+  * ussd_proxy: add debug output when session is destroyed
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Wed, 28 Oct 2015 13:51:45 +0200
+
 openbsc (0.14.0-fw.5) trusty; urgency=low
 
   * ussd_proxy: fix reject after resultLast
