@@ -1,3 +1,11 @@
+openbsc (0.14.0-fw.8) trusty; urgency=low
+
+  * ussd: handle UCS-2 coding
+  * ussd_proxy: add -7 option to force latin1 convertion to gsm 7-bit
+  * ussd_proxy: add -x proxy option
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Fri, 6 Nov 2015 16:34:58 +0200
+
 openbsc (0.14.0-fw.7) trusty; urgency=low
 
   * ussd: send reject to sup
