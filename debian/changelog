@@ -1,3 +1,9 @@
+openbsc (0.14.0-fw.9) trusty; urgency=low
+
+  * ussd_proxy: add content-type sip tag in bye for 3rd party software workaround
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Sat, 7 Nov 2015 23:14:58 +0200
+
 openbsc (0.14.0-fw.8) trusty; urgency=low
 
   * ussd: handle UCS-2 coding
