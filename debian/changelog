@@ -1,3 +1,9 @@
+openbsc (0.14.0-fw.10) trusty; urgency=low
+
+  * sup: fix handling update location result message
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Mon, 9 Nov 2015 16:45:58 +0200
+
 openbsc (0.14.0-fw.9) trusty; urgency=low
 
   * ussd_proxy: add content-type sip tag in bye for 3rd party software workaround
