@@ -25,6 +25,7 @@
 #include <osmocom/core/talloc.h>
 #include <openbsc/gsm_subscriber.h>
 #include <openbsc/gsm_04_08.h>
+#include <openbsc/ussd.h>
 #include <openbsc/mncc.h>
 #include <openbsc/paging.h>
 #include <openbsc/osmo_msc.h>
@@ -96,6 +97,9 @@ void trans_free(struct gsm_trans *trans)
 		break;
 	case GSM48_PDISC_SMS:
 		_gsm411_sms_trans_free(trans);
+		break;
+	case GSM48_PDISC_NC_SS:
+		_ussd_trans_free(trans);
 		break;
 	}
 
