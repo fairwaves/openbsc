@@ -1,3 +1,4 @@
+if BUILD_USSD_PROXY
 AM_CPPFLAGS = $(all_includes) -I$(top_srcdir)/include -I$(top_builddir)
 AM_CFLAGS=-Wall	$(COVERAGE_CFLAGS)			\
   	$(LIBOSMOCORE_CFLAGS) $(LIBOSMOGSM_CFLAGS) $(LIBOSMOVTY_CFLAGS) \
@@ -15,3 +16,4 @@ ussd_proxy_LDADD = \
 		-lsofia-sip-ua \
 		$(LIBOSMOGSM_LIBS) $(LIBOSMOVTY_LIBS) $(LIBOSMOCORE_LIBS)  \
 		$(LIBOSMOCTRL_LIBS) $(LIBOSMOABIS_LIBS)
+endif
