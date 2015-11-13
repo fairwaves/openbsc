@@ -239,6 +239,7 @@ struct gsm_network {
 	struct llist_head upqueue;
 	struct llist_head trans_list;
 	struct bsc_api *bsc_api;
+	struct gprs_gsup_client *ussd_sup_client;
 
 	unsigned int num_bts;
 	struct llist_head bts_list;
