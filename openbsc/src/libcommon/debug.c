@@ -165,6 +165,12 @@ static const struct log_info_cat default_categories[] = {
 		.description = "BSC/NAT IMSI based filtering",
 		.enabled = 1, .loglevel = LOGL_DEBUG,
 	},
+	[DSS] = {
+		.name = "DSS",
+		.description = "Layer3 Supplementary Service (SS)",
+		.color = "\033[0;33m",
+		.enabled = 1, .loglevel = LOGL_DEBUG,
+	},
 };
 
 enum log_filter {
