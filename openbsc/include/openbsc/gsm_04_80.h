@@ -7,12 +7,17 @@
 
 struct gsm_subscriber_connection;
 
-int gsm0480_send_ussd_response(struct gsm_subscriber_connection *conn,
-			       const struct msgb *in_msg, const char* response_text, 
-			       const struct ussd_request *req);
+int gsm0480_send_component(struct gsm_subscriber_connection *conn,
+			   struct msgb *msg,
+			   struct ss_header* reqhdr);
+
 int gsm0480_send_ussd_reject(struct gsm_subscriber_connection *conn,
-			     const struct msgb *msg, 
-			     const struct ussd_request *request);
+			     uint8_t invoke_id,
+			     uint8_t transaction_id);
+
+struct msgb *gsm0480_compose_ussd_component(struct ss_request* req);
+
+
 
 int gsm0480_send_ussdNotify(struct gsm_subscriber_connection *conn, int level, const char *text);
 int gsm0480_send_releaseComplete(struct gsm_subscriber_connection *conn);
