@@ -39,6 +39,22 @@
 #include <osmocom/core/msgb.h>
 #include <osmocom/gsm/tlv.h>
 
+/* This function can handle ASN1 length up to 255 which is enough for USSD */
+static inline unsigned char *msgb_wrap_with_ASN1_TL(struct msgb *msgb, uint8_t tag)
+{
+	uint16_t origlen = msgb->len;
+	uint8_t *data = msgb_push(msgb, (origlen > 0x7f) ? 3 : 2);
+	data[0] = tag;
+	if (origlen > 0x7f) {
+		data[1] = 0x81;
+		data[2] = origlen;
+	} else {
+		data[1] = origlen;
+	}
+	return data;
+}
+
+
 static inline unsigned char *msgb_wrap_with_TL(struct msgb *msgb, uint8_t tag)
 {
 	uint8_t *data = msgb_push(msgb, 2);
@@ -59,83 +75,111 @@ static inline unsigned char *msgb_push_TLV1(struct msgb *msgb, uint8_t tag,
 	return data;
 }
 
+static inline unsigned char *msgb_wrap_with_L(struct msgb *msgb)
+{
+	uint8_t *data = msgb_push(msgb, 1);
 
-/* Send response to a mobile-originated ProcessUnstructuredSS-Request */
-int gsm0480_send_ussd_response(struct gsm_subscriber_connection *conn,
-			       const struct msgb *in_msg, const char *response_text,
-			       const struct ussd_request *req)
+	data[0] = msgb->len - 1;
+	return data;
+}
+
+/* Compose universial USSD packet invoke/return_result payload */
+struct msgb *gsm0480_compose_ussd_component(struct ss_request* req)
 {
 	struct msgb *msg = gsm48_msgb_alloc_name("GSM 04.08 USSD RSP");
-	struct gsm48_hdr *gh;
 	uint8_t *ptr8;
-	int response_len;
 
 	/* First put the payload text into the message */
 	ptr8 = msgb_put(msg, 0);
-	gsm_7bit_encode_n_ussd(ptr8, msgb_tailroom(msg), response_text, &response_len);
-	msgb_put(msg, response_len);
+
+	memcpy(ptr8, req->ussd_text, req->ussd_text_len);
+	msgb_put(msg, req->ussd_text_len);
 
 	/* Then wrap it as an Octet String */
-	msgb_wrap_with_TL(msg, ASN1_OCTET_STRING_TAG);
+	msgb_wrap_with_ASN1_TL(msg, ASN1_OCTET_STRING_TAG);
 
 	/* Pre-pend the DCS octet string */
-	msgb_push_TLV1(msg, ASN1_OCTET_STRING_TAG, 0x0F);
+	msgb_push_TLV1(msg, ASN1_OCTET_STRING_TAG, req->ussd_text_language);
 
 	/* Then wrap these as a Sequence */
-	msgb_wrap_with_TL(msg, GSM_0480_SEQUENCE_TAG);
+	msgb_wrap_with_ASN1_TL(msg, GSM_0480_SEQUENCE_TAG);
 
-	/* Pre-pend the operation code */
-	msgb_push_TLV1(msg, GSM0480_OPERATION_CODE,
-			GSM0480_OP_CODE_PROCESS_USS_REQ);
+	if (req->component_type == GSM0480_CTYPE_RETURN_RESULT) {
+		/* Pre-pend the operation code */
+		msgb_push_TLV1(msg, GSM0480_OPERATION_CODE, req->opcode);
 
-	/* Wrap the operation code and IA5 string as a sequence */
-	msgb_wrap_with_TL(msg, GSM_0480_SEQUENCE_TAG);
+		/* Wrap the operation code and IA5 string as a sequence */
+		msgb_wrap_with_ASN1_TL(msg, GSM_0480_SEQUENCE_TAG);
 
-	/* Pre-pend the invoke ID */
-	msgb_push_TLV1(msg, GSM0480_COMPIDTAG_INVOKE_ID, req->invoke_id);
+		/* Pre-pend the invoke ID */
+		msgb_push_TLV1(msg, GSM0480_COMPIDTAG_INVOKE_ID, req->invoke_id);
+	} else if (req->component_type == GSM0480_CTYPE_INVOKE) {
+		/* Pre-pend the operation code */
+		msgb_push_TLV1(msg, GSM0480_OPERATION_CODE, req->opcode);
 
-	/* Wrap this up as a Return Result component */
-	msgb_wrap_with_TL(msg, GSM0480_CTYPE_RETURN_RESULT);
+		/* Pre-pend the invoke ID */
+		msgb_push_TLV1(msg, GSM0480_COMPIDTAG_INVOKE_ID, req->invoke_id);
+	} else {
+		abort();
+	}
 
-	/* Wrap the component in a Facility message */
-	msgb_wrap_with_TL(msg, GSM0480_IE_FACILITY);
+	/* Wrap this up as an Invoke or a Return Result component */
+	msgb_wrap_with_ASN1_TL(msg, req->component_type);
+	return msg;
+}
+
+#ifndef NO_GSM0480_SEND_FUNC
+
+int gsm0480_send_component(struct gsm_subscriber_connection *conn,
+			   struct msgb *msg,
+			   struct ss_header* reqhdr)
+{
+	struct gsm48_hdr *gh;
+
+	if (reqhdr->message_type == GSM0480_MTYPE_REGISTER ||
+		reqhdr->message_type == GSM0480_MTYPE_RELEASE_COMPLETE) {
+		/* Wrap the component in a Facility message, it's not ASN1 */
+		msgb_wrap_with_TL(msg, GSM0480_IE_FACILITY);
+	} else if (reqhdr->message_type == GSM0480_MTYPE_FACILITY) {
+		/* For GSM0480_MTYPE_FACILITY it's LV not TLV */
+		msgb_wrap_with_L(msg);
+	} else {
+		abort();
+	}
 
 	/* And finally pre-pend the L3 header */
 	gh = (struct gsm48_hdr *) msgb_push(msg, sizeof(*gh));
-	gh->proto_discr = GSM48_PDISC_NC_SS | req->transaction_id
+	gh->proto_discr = GSM48_PDISC_NC_SS | reqhdr->transaction_id
 					| (1<<7);  /* TI direction = 1 */
-	gh->msg_type = GSM0480_MTYPE_RELEASE_COMPLETE;
+	gh->msg_type = reqhdr->message_type;
+
+	DEBUGP(DSS, "Sending SS to mobile: %s\n", msgb_hexdump(msg));
 
 	return gsm0808_submit_dtap(conn, msg, 0, 0);
 }
 
+
 int gsm0480_send_ussd_reject(struct gsm_subscriber_connection *conn,
-			     const struct msgb *in_msg,
-			     const struct ussd_request *req)
+			     uint8_t invoke_id,
+			     uint8_t transaction_id)
 {
 	struct msgb *msg = gsm48_msgb_alloc_name("GSM 04.08 USSD REJ");
-	struct gsm48_hdr *gh;
+	struct ss_header ssh;
 
 	/* First insert the problem code */
 	msgb_push_TLV1(msg, GSM_0480_PROBLEM_CODE_TAG_GENERAL,
 			GSM_0480_GEN_PROB_CODE_UNRECOGNISED);
 
 	/* Before it insert the invoke ID */
-	msgb_push_TLV1(msg, GSM0480_COMPIDTAG_INVOKE_ID, req->invoke_id);
+	msgb_push_TLV1(msg, GSM0480_COMPIDTAG_INVOKE_ID, invoke_id);
 
 	/* Wrap this up as a Reject component */
-	msgb_wrap_with_TL(msg, GSM0480_CTYPE_REJECT);
+	msgb_wrap_with_ASN1_TL(msg, GSM0480_CTYPE_REJECT);
 
-	/* Wrap the component in a Facility message */
-	msgb_wrap_with_TL(msg, GSM0480_IE_FACILITY);
-
-	/* And finally pre-pend the L3 header */
-	gh = (struct gsm48_hdr *) msgb_push(msg, sizeof(*gh));
-	gh->proto_discr = GSM48_PDISC_NC_SS;
-	gh->proto_discr |= req->transaction_id | (1<<7);  /* TI direction = 1 */
-	gh->msg_type = GSM0480_MTYPE_RELEASE_COMPLETE;
-
-	return gsm0808_submit_dtap(conn, msg, 0, 0);
+	/* Prepare data for L3 header */
+	ssh.transaction_id = transaction_id;
+	ssh.message_type = GSM0480_MTYPE_RELEASE_COMPLETE;
+	return gsm0480_send_component(conn, msg, &ssh);
 }
 
 int gsm0480_send_ussdNotify(struct gsm_subscriber_connection *conn, int level, const char *text)
@@ -173,3 +217,5 @@ int gsm0480_send_releaseComplete(struct gsm_subscriber_connection *conn)
 
 	return gsm0808_submit_dtap(conn, msg, 0, 0);
 }
+
+#endif
