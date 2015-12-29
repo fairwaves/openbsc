@@ -1118,6 +1118,7 @@ int bsc_vty_init_extra(void)
 	install_element(NITB_NODE, &cfg_nitb_subscr_create_only_local_cmd);
 	install_element(NITB_NODE, &cfg_nitb_no_subscr_create_only_local_cmd);
 	install_element(NITB_NODE, &sup_ussd_destination_cmd);
+	install_element(NITB_NODE, &sms_destination_cmd);
 
 	return 0;
 }
