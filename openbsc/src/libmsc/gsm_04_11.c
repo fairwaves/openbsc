@@ -281,6 +281,10 @@ int sms_route_mt_sms(struct gsm_subscriber_connection *conn, struct msgb *msg,
 	int rc;
 
 #ifdef BUILD_SMPP
+	if (strlen(conn->subscr->extension) <= 5) {
+		goto try_local;
+	}
+
 	int smpp_first = smpp_route_smpp_first(gsms, conn);
 
 	/*
