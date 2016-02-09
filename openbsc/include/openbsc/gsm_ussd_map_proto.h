@@ -9,13 +9,14 @@ enum {
 };
 
 int subscr_uss_message(struct msgb *msg,
-		       struct ss_request *req,
+		       struct ss_header *req,
 		       const char* extension,
-		       uint32_t ref);
+		       uint32_t ref,
+		       const uint8_t *component_data);
 
 int rx_uss_message_parse(const uint8_t* data,
 			 size_t len,
-			 struct ss_request *ss,
+			 struct ss_header *ss,
 			 uint32_t *ref,
 			 char* extention,
 			 size_t extention_len);

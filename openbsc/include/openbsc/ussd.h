@@ -11,7 +11,11 @@
 int handle_rcv_ussd(struct gsm_subscriber_connection *conn, struct msgb *msg);
 
 
-int on_ussd_response(struct gsm_network *net, uint32_t ref, struct ss_request* req, const char* extention);
+int on_ussd_response(struct gsm_network *net,
+		     uint32_t ref,
+		     struct ss_header *reqhdr,
+		     const uint8_t *component,
+		     const char* extention);
 
 
 void _ussd_trans_free(struct gsm_trans *trans);

@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <unistd.h>
+#include <ctype.h>
 
 typedef struct context_s context_t;
 #define NTA_OUTGOING_MAGIC_T context_t
@@ -39,6 +40,7 @@ typedef struct operation operation_t;
 
 #include <openbsc/gprs_gsup_messages.h>
 #include <openbsc/gsm_ussd_map_proto.h>
+#include <openbsc/gsm_04_80.h>
 
 #include <iconv.h>
 
@@ -59,15 +61,22 @@ struct isup_connection {
 	struct msgb    *pending_msg;
 };
 
+typedef enum ss_type {
+	TYPE_USSD,
+	TYPE_SS_OTHER
+} ss_type_t;
+
 struct ussd_session {
 	isup_connection_t  *conn;
-
 	sup_tcap_tid_t      ref;
 
 	int                 ms_originated;
-	struct ss_request   rigester_msg;
-
 	char                extention[32];
+
+	ss_type_t           type;
+
+	uint8_t             ss_code;
+	struct ss_request   rigester_msg;
 };
 
 struct context_s {
@@ -119,10 +128,14 @@ static
 int ussd_send_data(operation_t *op, int last, const char* lang, unsigned lang_len,
 		   const char* msg, unsigned msg_len);
 static
-int ussd_send_data_ss(isup_connection_t *conn, struct ss_request* reply, uint32_t ref);
+int ussd_send_data_ss(isup_connection_t *conn,
+		      uint8_t message_type,
+		      const uint8_t *component,
+		      uint8_t component_len,
+		      uint32_t ref);
 
 static
-int ussd_send_reject(isup_connection_t *conn, uint32_t ref, uint8_t invoke_id, uint8_t opcode);
+int ussd_send_reject(isup_connection_t *conn, uint32_t ref, uint8_t invoke_id);
 
 static const char* get_unknown_header(sip_t const *sip, const char *header)
 {
@@ -258,11 +271,18 @@ static void operation_destroy(operation_t* op)
 	llist_del(&op->list);
 	op->ctx->operation_count--;
 
-	fprintf(stderr, "--- operation %*.s from %s destroyed (sessions: %d)\n",
-		op->ussd.rigester_msg.ussd_text_len,
-		op->ussd.rigester_msg.ussd_text,
-		op->ussd.extention,
-		op->ctx->operation_count);
+	if (op->ussd.type == TYPE_USSD) {
+		fprintf(stderr, "--- operation %*.s from %s destroyed (sessions: %d)\n",
+			op->ussd.rigester_msg.ussd_text_len,
+			op->ussd.rigester_msg.ussd_text,
+			op->ussd.extention,
+			op->ctx->operation_count);
+	} else {
+		fprintf(stderr, "--- operation 0x%02x from %s destroyed (sessions: %d)\n",
+			op->ussd.ss_code,
+			op->ussd.extention,
+			op->ctx->operation_count);
+	}
 
 	/* release operation context information */
 	su_free(op->ctx->home, op);
@@ -280,13 +300,21 @@ void proxy_r_invite(int           status,
 	fprintf(stderr, "*** Got reply %d for INVITE\n", status);
 	if (status == 200) {
 		nua_ack(nh, TAG_END());
-	} else {
-		printf("response to INVITE: %03d %s\n", status, phrase);
+	} else if (hmagic->ussd.type == TYPE_USSD) {
+		printf("response to USSD INVITE: %03d %s\n", status, phrase);
 
 		ussd_send_reject(hmagic->ussd.conn,
 				 hmagic->ussd.ref,
-				 hmagic->ussd.rigester_msg.invoke_id,
-				 hmagic->ussd.rigester_msg.opcode);
+				 hmagic->ussd.rigester_msg.invoke_id);
+		operation_destroy(hmagic);
+	} else {
+		printf("response to SS INVITE: %03d %s\n", status, phrase);
+
+		ussd_send_data_ss(hmagic->ussd.conn,
+				  GSM0480_MTYPE_RELEASE_COMPLETE,
+				  NULL,
+				  0,
+				  hmagic->ussd.ref);
 		operation_destroy(hmagic);
 	}
 }
@@ -340,9 +368,66 @@ void proxy_i_bye(int           status,
 		status);
 	ussd_send_reject(hmagic->ussd.conn,
 			 hmagic->ussd.ref,
-			 hmagic->ussd.rigester_msg.invoke_id,
-			 hmagic->ussd.rigester_msg.opcode);
+			 hmagic->ussd.rigester_msg.invoke_id);
 	operation_destroy(hmagic);
+}
+
+static
+uint8_t get_nibble(uint8_t a)
+{
+	if (a >= '0' && a <= '9')
+		return a-'0';
+	else if (a >= 'A' && a <= 'F')
+		return a-'A';
+	else if (a >= 'a' && a <= 'f')
+		return a-'a';
+
+	fprintf(stderr, "*** Incorrect nibble deteced: %02x\n", a);
+	return 0;
+}
+
+void proxy_i_bye_ss(int           status,
+		    char const   *phrase,
+		    nua_t        *nua,
+		    nua_magic_t  *magic,
+		    nua_handle_t *nh,
+		    nua_hmagic_t *hmagic,
+		    sip_t const  *sip,
+		    tagi_t        tags[])
+{
+	const char* pl_txt = sip->sip_payload->pl_data;
+	unsigned pl_txt_len = sip->sip_payload->pl_len;
+	uint8_t buffer[256];
+	uint8_t buflen = 0;
+	int i;
+
+	for (i = 0; i < pl_txt_len && buflen < sizeof(buflen) - 1; ) {
+		uint8_t hi_nibble = pl_txt[i++];
+		if (hi_nibble == 0)
+			break;
+		if (isspace(hi_nibble))
+			continue;
+
+		uint8_t lo_nibble = pl_txt[i++];
+		if (lo_nibble == 0)
+			break;
+
+		buffer[buflen++] = (get_nibble(hi_nibble) << 4) |
+				get_nibble(lo_nibble);
+	}
+
+	if (buflen > 1) {
+		if (buffer[1] != buflen - 2) {
+			fprintf(stderr, "*** parsed %d len, but should be %d (%s)",
+				buflen, buffer[1] + 2, pl_txt);
+		}
+	}
+
+	ussd_send_data_ss(hmagic->ussd.conn,
+			  GSM0480_MTYPE_RELEASE_COMPLETE,
+			  buffer,
+			  buflen,
+			  hmagic->ussd.ref);
 }
 
 void proxy_r_bye(int           status,
@@ -441,8 +526,7 @@ void proxy_info(int           status,
 		status);
 	ussd_send_reject(hmagic->ussd.conn,
 			 hmagic->ussd.ref,
-			 hmagic->ussd.rigester_msg.invoke_id,
-			 hmagic->ussd.rigester_msg.opcode);
+			 hmagic->ussd.rigester_msg.invoke_id);
 	operation_destroy(hmagic);
 }
 
@@ -497,6 +581,96 @@ static int decode_to_latin1(char* outbuf, unsigned size,
 /* URL_RESERVED_CHARS in sofia is not strict enough as in RFC3986 */
 #define RFC3986_RESERVED_CHARS "!*'();:@&=+$,/?#[]"
 
+int ss_session_open_mo(operation_t *op,
+		       isup_connection_t *conn,
+		       const uint8_t* component,
+		       uint8_t component_len,
+		       uint32_t ref,
+		       const char* extention)
+{
+	char buffer[512+1];
+	int i;
+	context_t* ctx = op->ctx;
+	sip_to_t *to = NULL;
+	sip_to_t *from = NULL;
+	url_t to_url, from_url;
+	char* to_url_str;
+	char* from_url_str;
+
+	op->ussd.ref = ref;
+	op->ussd.conn = conn;
+	op->ussd.ms_originated = 1;
+	op->ussd.type = TYPE_SS_OTHER;
+
+	strncpy(op->ussd.extention, extention, sizeof(op->ussd.extention));
+
+	for (i = 0; i < component_len; ++i) {
+		uint8_t nibble_h = component[i] >> 4;
+		uint8_t nibble_l = component[i] & 0xf;
+
+		buffer[2*i    ] = (nibble_h < 10) ? '0' + nibble_h : 'a' + nibble_h - 10;
+		buffer[2*i + 1] = (nibble_l < 10) ? '0' + nibble_l : 'a' + nibble_l - 10;
+	}
+	buffer[2*i] = 0;
+
+	/* Destination address */
+	to_url = *ctx->to_url;
+	to_url.url_user = "mapss";
+	to_url_str = url_as_string(ctx->home, &to_url);
+	if (to_url_str == NULL) {
+		goto failed_create_handle;
+	}
+	to = sip_to_create(ctx->home, (url_string_t *)to_url_str);
+	su_free(ctx->home, to_url_str);
+	if (!to) {
+		goto failed_create_handle;
+	}
+
+	/* Source address */
+	from_url = *ctx->self_url;
+	from_url.url_user = extention;
+	from_url_str = url_as_string(ctx->home, &from_url);
+	if (from_url_str == NULL) {
+		goto failed_create_handle;
+	}
+	from = sip_from_create(ctx->home, (url_string_t *)from_url_str);
+	su_free(ctx->home, from_url_str);
+	if (!to) {
+		goto failed_create_handle;
+	}
+
+	/* create operation handle */
+	op->handle = nua_handle(ctx->nua,
+				op,
+				SIPTAG_TO(to),
+				SIPTAG_FROM(from),
+				NUTAG_M_USERNAME(extention),
+				TAG_END());
+
+	su_free(ctx->home, from);
+	su_free(ctx->home, to);
+	from = NULL;
+	to = NULL;
+
+	if (op->handle == NULL) {
+		goto failed_create_handle;
+	}
+
+	nua_invite(op->handle,
+		   SIPTAG_CONTENT_TYPE_STR("application/map-ss-binary"),
+		   SIPTAG_PAYLOAD_STR(buffer),
+		   TAG_END());
+	return 0;
+
+failed_create_handle:
+	if (from != NULL)
+		su_free(ctx->home, from);
+	if (to != NULL)
+		su_free(ctx->home, to);
+
+	return -1;
+}
+
 int ussd_session_open_mo(operation_t *op,
 			 isup_connection_t *conn,
 			 struct ss_request* ss,
@@ -518,6 +692,7 @@ int ussd_session_open_mo(operation_t *op,
 	op->ussd.ref = ref;
 	op->ussd.conn = conn;
 	op->ussd.ms_originated = 1;
+	op->ussd.type = TYPE_USSD;
 	op->ussd.rigester_msg = *ss;
 	strncpy(op->ussd.extention, extention, sizeof(op->ussd.extention));
 
@@ -649,15 +824,20 @@ void context_callback(nua_event_t   event,
 		break;
 
 	case nua_i_info:
-		proxy_info(status, phrase, nua, magic, nh, hmagic, sip, tags, 0);
+		if (hmagic->ussd.type == TYPE_USSD)
+			proxy_info(status, phrase, nua, magic, nh, hmagic, sip, tags, 0);
 		break;
 
 	case nua_r_info:
-		proxy_info(status, phrase, nua, magic, nh, hmagic, sip, tags, 1);
+		if (hmagic->ussd.type == TYPE_USSD)
+			proxy_info(status, phrase, nua, magic, nh, hmagic, sip, tags, 1);
 		break;
 
 	case nua_i_bye:
-		proxy_i_bye(status, phrase, nua, magic, nh, hmagic, sip, tags);
+		if (hmagic->ussd.type == TYPE_USSD)
+			proxy_i_bye(status, phrase, nua, magic, nh, hmagic, sip, tags);
+		else
+			proxy_i_bye_ss(status, phrase, nua, magic, nh, hmagic, sip, tags);
 		break;
 
 	case nua_i_invite:
@@ -690,7 +870,8 @@ void context_callback(nua_event_t   event,
 static int rx_sup_uss_message(isup_connection_t *sup_conn, const uint8_t* data, size_t len)
 {
 	char extention[32] = {0};
-	struct ss_request ss;
+	struct ss_header ss;
+	struct ss_request ssreq;
 	uint32_t ref;
 	operation_t* op;
 	int rc;
@@ -699,20 +880,32 @@ static int rx_sup_uss_message(isup_connection_t *sup_conn, const uint8_t* data, 
 
 	if (rx_uss_message_parse(data, len, &ss, &ref, extention, sizeof(extention))) {
 		LOGP(DLCTRL, LOGL_ERROR, "Can't parse uss message\n");
-		goto err_send_reject;
+		goto err_bad_packet;
 	}
 
-	LOGP(DLCTRL, LOGL_ERROR, "Got ref=%d mtype=0x%02x invoke_id=0x%02x opcode=0x%02x component_type=0x%02x text=%s\n", ref,
-	     ss.message_type, ss.invoke_id, ss.opcode, ss.component_type, ss.ussd_text);
+	memset(&ssreq, 0, sizeof(ssreq));
+	rc = gsm0480_parse_ss_facility(data + ss.component_offset,
+				       ss.component_length,
+				       &ssreq);
+	if (!rc) {
+		LOGP(DLCTRL, LOGL_ERROR, "Can't parse facility message\n");
+		goto err_bad_component;
+	}
+
+	LOGP(DLCTRL, LOGL_ERROR, "Got ref=%d mtype=0x%02x invoke_id=0x%02x opcode=0x%02x ss_code=0x%02x component_type=0x%02x text=%s\n", ref,
+	     ss.message_type, ssreq.invoke_id, ssreq.opcode, ssreq.ss_code, ssreq.component_type, ssreq.ussd_text);
 
 	switch (ss.message_type) {
 	case GSM0480_MTYPE_REGISTER:
-		if (ss.component_type != GSM0480_CTYPE_INVOKE) {
-			LOGP(DLCTRL, LOGL_ERROR, "Non-INVOKE component type in REGISTER: 0x%02x\n", ss.component_type);
+		if (ssreq.component_type != GSM0480_CTYPE_INVOKE) {
+			LOGP(DLCTRL, LOGL_ERROR, "Non-INVOKE component type in REGISTER: 0x%02x\n", ssreq.component_type);
 			goto err_send_reject;
 		}
-		if (ss.opcode != GSM0480_OP_CODE_PROCESS_USS_REQ) {
-			LOGP(DLCTRL, LOGL_ERROR, "Don't know hot to handle this SS opcode: 0x%02x\n", ss.opcode);
+		if (ssreq.opcode == GSM0480_OP_CODE_PROCESS_USS_DATA ||
+			ssreq.opcode == GSM0480_OP_CODE_USS_NOTIFY ||
+			ssreq.opcode == GSM0480_OP_CODE_USS_REQUEST) {
+
+			LOGP(DLCTRL, LOGL_ERROR, "Don't know hot to handle this SS opcode: 0x%02x\n", ssreq.opcode);
 			goto err_send_reject;
 		}
 		/* Create new session */
@@ -721,46 +914,68 @@ static int rx_sup_uss_message(isup_connection_t *sup_conn, const uint8_t* data, 
 			LOGP(DLCTRL, LOGL_ERROR, "Unable to allocate new session\n");
 			goto err_send_reject;
 		}
-		LOGP(DLCTRL, LOGL_ERROR, "New session %.*s from %s, active: %d\n",
-		     ss.ussd_text_len,
-		     ss.ussd_text,
-		     extention,
-		     ctx->operation_count);
 
-		rc = ussd_session_open_mo(op, sup_conn, &ss, ref, extention);
-		if (rc < 0) {
-			operation_destroy(op);
-			goto err_send_reject;
+		if (ssreq.opcode == GSM0480_OP_CODE_PROCESS_USS_REQ) {
+			LOGP(DLCTRL, LOGL_ERROR, "New session %.*s from %s, active: %d\n",
+			     ssreq.ussd_text_len,
+			     ssreq.ussd_text,
+			     extention,
+			     ctx->operation_count);
+
+			op->ussd.ss_code = 0;
+			rc = ussd_session_open_mo(op, sup_conn, &ssreq, ref, extention);
+			if (rc < 0) {
+				operation_destroy(op);
+				goto err_send_reject;
+			}
+		} else {
+			LOGP(DLCTRL, LOGL_ERROR, "New session SS 0x%02x from %s, active: %d\n",
+			     ssreq.opcode,
+			     extention,
+			     ctx->operation_count);
+
+			op->ussd.ss_code = ssreq.ss_code;
+			op->ussd.rigester_msg = ssreq;
+			rc = ss_session_open_mo(op,
+						sup_conn,
+						data + ss.component_offset,
+						ss.component_length,
+						ref,
+						extention);
+			if (rc < 0) {
+				operation_destroy(op);
+				goto err_send_reject;
+			}
 		}
 		break;
 
 	case GSM0480_MTYPE_FACILITY:
 		//Only MS-originated Menu session is supported, so we ignore INVOKE here
-		if (ss.component_type != GSM0480_CTYPE_RETURN_RESULT &&
-				ss.component_type != GSM0480_CTYPE_RETURN_ERROR &&
-				ss.component_type != GSM0480_CTYPE_REJECT) {
-			LOGP(DLCTRL, LOGL_ERROR, "Non-{RESULT/RETURN_ERROR/REJECT} component type in FACILITY: 0x%02x\n", ss.component_type);
+		if (ssreq.component_type != GSM0480_CTYPE_RETURN_RESULT &&
+				ssreq.component_type != GSM0480_CTYPE_RETURN_ERROR &&
+				ssreq.component_type != GSM0480_CTYPE_REJECT) {
+			LOGP(DLCTRL, LOGL_ERROR, "Non-{RESULT/RETURN_ERROR/REJECT} component type in FACILITY: 0x%02x\n", ssreq.component_type);
 			goto err_send_reject;
 		}
 		// /////////////////////////////////////////////////
 		// TODO handle RETURN_ERROR/REJECT
-		if (ss.component_type != GSM0480_CTYPE_RETURN_RESULT) {
-			LOGP(DLCTRL, LOGL_ERROR, "Component type in FACILITY: 0x%02x is not implemented yet\n", ss.component_type);
+		if (ssreq.component_type != GSM0480_CTYPE_RETURN_RESULT) {
+			LOGP(DLCTRL, LOGL_ERROR, "Component type in FACILITY: 0x%02x is not implemented yet\n", ssreq.component_type);
 			goto err_send_reject;
 		}
-		if (ss.opcode != GSM0480_OP_CODE_USS_REQUEST) {
-			LOGP(DLCTRL, LOGL_ERROR, "Don't know hot to handle this SS opcode: 0x%02x\n", ss.opcode);
+		if (ssreq.opcode != GSM0480_OP_CODE_USS_REQUEST) {
+			LOGP(DLCTRL, LOGL_ERROR, "Don't know hot to handle this SS opcode: 0x%02x\n", ssreq.opcode);
 			goto err_send_reject;
 		}
 		op = operation_find_by_tid(ctx, ref);
 		if (op == NULL) {
 			LOGP(DLCTRL, LOGL_ERROR, "No active session with tid=%d were found\n",
-			     ss.invoke_id);
+			     ssreq.invoke_id);
 			goto err_send_reject;
 		}
 
 		// TODO check result!! MO/MT error handling
-		rc = ussd_session_facility(op, &ss, extention);
+		rc = ussd_session_facility(op, &ssreq, extention);
 		if (rc < 0) {
 			operation_destroy(op);
 			goto err_send_reject;
@@ -771,7 +986,7 @@ static int rx_sup_uss_message(isup_connection_t *sup_conn, const uint8_t* data, 
 		op = operation_find_by_tid(ctx, ref);
 		if (op == NULL) {
 			LOGP(DLCTRL, LOGL_ERROR, "No active session with tid=%d were found for RELEASE_COMPLETE\n",
-			     ss.invoke_id);
+			     ssreq.invoke_id);
 			return 0;
 		}
 
@@ -786,30 +1001,63 @@ static int rx_sup_uss_message(isup_connection_t *sup_conn, const uint8_t* data, 
 	return 0;
 
 err_send_reject:
-	ussd_send_reject(sup_conn, ref, ss.invoke_id, ss.opcode);
+	ussd_send_reject(sup_conn, ref, ssreq.invoke_id);
+	return -1;
+
+err_bad_component:
+	return ussd_send_data_ss(sup_conn,
+				 GSM0480_MTYPE_RELEASE_COMPLETE,
+				 NULL,
+				 0,
+				 ref);
+	return -1;
+
+err_bad_packet:
+	// Disconnect ?
 	return -1;
 }
 
-int ussd_send_reject(isup_connection_t *conn, uint32_t ref, uint8_t invoke_id, uint8_t opcode)
+int ussd_send_reject(isup_connection_t *conn, uint32_t ref, uint8_t invoke_id)
 {
-	struct ss_request error_ss;
+	uint8_t buffer[2+3+3];
 
-	memset(&error_ss, 0, sizeof(error_ss));
-	error_ss.message_type = GSM0480_MTYPE_RELEASE_COMPLETE;
-	error_ss.component_type = GSM0480_CTYPE_REJECT;
-	error_ss.invoke_id = invoke_id;
-	error_ss.opcode = opcode;
+	buffer[0] = GSM0480_CTYPE_REJECT;
+	buffer[1] = 3+3;
 
-	return ussd_send_data_ss(conn, &error_ss, ref);
+	buffer[2] = GSM0480_COMPIDTAG_INVOKE_ID;
+	buffer[3] = 1;
+	buffer[4] = invoke_id;
+
+	buffer[5] = GSM_0480_PROBLEM_CODE_TAG_GENERAL;
+	buffer[6] = 1;
+	buffer[7] = GSM_0480_GEN_PROB_CODE_UNRECOGNISED;
+
+	return ussd_send_data_ss(conn,
+				 GSM0480_MTYPE_RELEASE_COMPLETE,
+				 buffer,
+				 sizeof(buffer),
+				 ref);
 }
 
-int ussd_send_data_ss(isup_connection_t *conn, struct ss_request* reply, uint32_t ref)
+int ussd_send_data_ss(isup_connection_t *conn,
+		      uint8_t message_type,
+		      const uint8_t* component,
+		      uint8_t component_len,
+		      uint32_t ref)
 {
 	struct msgb *outmsg = msgb_alloc_headroom(4000, 64, __func__);
+	struct ss_header hdr;
+
+	hdr.transaction_id = 0;
+	hdr.message_type = message_type;
+	hdr.component_length = component_len;
+	hdr.component_offset = 0;
+
 	subscr_uss_message(outmsg,
-			   reply,
+			   &hdr,
 			   NULL,
-			   ref);
+			   ref,
+			   component);
 
 	LOGP(DLCTRL, LOGL_ERROR,
 	     "Sending USS, will send: %s\n", msgb_hexdump(outmsg));
@@ -820,20 +1068,24 @@ int ussd_send_data_ss(isup_connection_t *conn, struct ss_request* reply, uint32_
 int ussd_send_data(operation_t *op, int last, const char* lang, unsigned lang_len,
 		   const char* msg, unsigned msg_len)
 {
+	struct msgb *buf;
 	struct ss_request ss;
+	int rc;
+	uint8_t message_type;
+
 	memset(&ss, 0, sizeof(ss));
 
 	// TODO handle language
 	if (msg == NULL) {
-		ss.message_type = GSM0480_MTYPE_RELEASE_COMPLETE;
+		message_type = GSM0480_MTYPE_RELEASE_COMPLETE;
 		ss.component_type = GSM0480_CTYPE_REJECT;
 		ss.opcode = op->ussd.rigester_msg.opcode;
 	} else if (last) {
-		ss.message_type = GSM0480_MTYPE_RELEASE_COMPLETE;
+		message_type = GSM0480_MTYPE_RELEASE_COMPLETE;
 		ss.component_type = GSM0480_CTYPE_RETURN_RESULT;
 		ss.opcode = op->ussd.rigester_msg.opcode;
 	} else {
-		ss.message_type = GSM0480_MTYPE_FACILITY;
+		message_type = GSM0480_MTYPE_FACILITY;
 		ss.component_type = (op->ussd.ms_originated) ? GSM0480_CTYPE_INVOKE
 							     : GSM0480_CTYPE_RETURN_RESULT;
 		ss.opcode = GSM0480_OP_CODE_USS_REQUEST;
@@ -884,7 +1136,15 @@ int ussd_send_data(operation_t *op, int last, const char* lang, unsigned lang_le
 		ss.ussd_text[0] = 0;
 	}
 
-	return ussd_send_data_ss(op->ussd.conn, &ss, op->ussd.ref);
+	buf = gsm0480_compose_ussd_component(&ss);
+	if (!buf) {
+		return -1;
+	}
+	rc = ussd_send_data_ss(op->ussd.conn, message_type,
+			       buf->data, msgb_length(buf), op->ussd.ref);
+	msgb_free(buf);
+
+	return rc;
 }
 
 static void timer_function(su_root_magic_t *magic,
@@ -898,18 +1158,31 @@ static void timer_function(su_root_magic_t *magic,
 	llist_for_each_entry_safe(op, tmp, &cli->operation_list, list) {
 		su_duration_t lasts = su_duration(n, op->tm_initiated);
 		if (lasts > cli->max_ussd_ses_duration) {
-			fprintf(stderr, "!!! session %.*s from %s lasted %ld ms, more than thresold %ld ms, destroying\n",
-				op->ussd.rigester_msg.ussd_text_len,
-				op->ussd.rigester_msg.ussd_text,
-				op->ussd.extention,
-				lasts,
-				cli->max_ussd_ses_duration);
+			if (op->ussd.type == TYPE_USSD) {
+				fprintf(stderr, "!!! session %.*s from %s lasted %ld ms, more than thresold %ld ms, destroying\n",
+					op->ussd.rigester_msg.ussd_text_len,
+					op->ussd.rigester_msg.ussd_text,
+					op->ussd.extention,
+					lasts,
+					cli->max_ussd_ses_duration);
 
 
-			ussd_send_reject(op->ussd.conn,
-					 op->ussd.ref,
-					 op->ussd.rigester_msg.invoke_id,
-					 op->ussd.rigester_msg.opcode);
+				ussd_send_reject(op->ussd.conn,
+						 op->ussd.ref,
+						 op->ussd.rigester_msg.invoke_id);
+			} else {
+				fprintf(stderr, "!!! session 0x%02x from %s lasted %ld ms, more than thresold %ld ms, destroying\n",
+					op->ussd.ss_code,
+					op->ussd.extention,
+					lasts,
+					cli->max_ussd_ses_duration);
+
+				ussd_send_data_ss(op->ussd.conn,
+						  GSM0480_MTYPE_RELEASE_COMPLETE,
+						  NULL,
+						  0,
+						  op->ussd.ref);
+			}
 			operation_destroy(op);
 		}
 	}

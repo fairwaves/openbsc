@@ -8,7 +8,7 @@
 int ussd_map_read_cb(struct gprs_gsup_client *sup_client,
 		     struct msgb *msg);
 
-int ussd_map_tx_message(struct gsm_network *net, struct ss_request *req,
-			const char *extension, uint32_t ref);
+int ussd_map_tx_message(struct gsm_network *net, struct ss_header *req,
+			const char *extension, uint32_t ref, const uint8_t *component_data);
 
 #endif /* _GSM_USSD_MAP_H */

@@ -34,15 +34,16 @@
 
 
 int ussd_map_tx_message(struct gsm_network* net,
-			struct ss_request *req,
+			struct ss_header *req,
 			const char* extension,
-			uint32_t ref)
+			uint32_t ref,
+			const uint8_t* component_data)
 {
 	struct msgb *msg = gprs_gsup_msgb_alloc();
 	if (!msg)
 		return -ENOMEM;
 
-	subscr_uss_message(msg, req, extension, ref);
+	subscr_uss_message(msg, req, extension, ref, component_data);
 
 	return gprs_gsup_client_send(net->ussd_sup_client, msg);
 }
@@ -52,7 +53,7 @@ static int ussd_map_rx_message_int(struct gsm_network *net, const uint8_t* data,
 {
 	char extension[32] = {0};
 	uint32_t ref;
-	struct ss_request ss;
+	struct ss_header ss;
 	memset(&ss, 0, sizeof(ss));
 
 	if (rx_uss_message_parse(data, len, &ss, &ref, extension, sizeof(extension))) {
@@ -60,10 +61,10 @@ static int ussd_map_rx_message_int(struct gsm_network *net, const uint8_t* data,
 		return -1;
 	}
 
-	LOGP(DSS, LOGL_ERROR, "Got invoke_id=0x%02x opcode=0x%02x facility=0x%02x text=%s\n",
-	     ss.invoke_id, ss.opcode, ss.component_type, ss.ussd_text);
+	LOGP(DSS, LOGL_ERROR, "Got type=0x%02x len=%d\n",
+	     ss.message_type, ss.component_length);
 
-	return on_ussd_response(net, ref, &ss, extension);
+	return on_ussd_response(net, ref, &ss, data + ss.component_offset, extension);
 }
 
 static int ussd_map_rx_message(struct gprs_gsup_client *sup_client, struct msgb *msg)

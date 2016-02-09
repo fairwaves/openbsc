@@ -33,26 +33,56 @@
 #include <openbsc/gprs_utils.h>
 #include <openbsc/ussd.h>
 
+/*
+* 0 - GPRS_GSUP_MSGT_USSD_MAP constant
+* 1 - LEN
+* 2 - message_type [ REGISTER / FACILITY / RELEASE COMPLETE ]
+* 3,4,5,6 - tid          ID associated with the session
+* 7 - FMAP_MSISDN constant
+* 8 - extention_len
+* 9..x -  extention
+* x+1 .. original MAP message
+*/
 
 int subscr_uss_message(struct msgb *msg,
-		       struct ss_request *req,
+		       struct ss_header *req,
 		       const char* extension,
-		       uint32_t ref)
+		       uint32_t ref,
+		       const uint8_t* component_data)
 {
-	size_t bcd_len = 0;
+	uint8_t bcd_lvlen;
+	uint8_t offset = 0;
 	uint8_t *gsup_indicator;
 
-	gsup_indicator = msgb_put(msg, 8);
+	gsup_indicator = msgb_put(msg, 7);
 
 	/* First byte should always be GPRS_GSUP_MSGT_USSD_MAP */
-	gsup_indicator[0] = GPRS_GSUP_MSGT_USSD_MAP;
-	gsup_indicator[1] = req->message_type;
+	gsup_indicator[offset++] = GPRS_GSUP_MSGT_USSD_MAP;
+	gsup_indicator[offset++] = 0; // Total length
+	gsup_indicator[offset++] = req->message_type;
 
-	gsup_indicator[2] = ref >> 24;
-	gsup_indicator[3] = ref >> 16;
-	gsup_indicator[4] = ref >> 7;
-	gsup_indicator[5] = ref;
+	gsup_indicator[offset++] = ref >> 24;
+	gsup_indicator[offset++] = ref >> 16;
+	gsup_indicator[offset++] = ref >> 8;
+	gsup_indicator[offset++] = ref;
 
+	if (extension) {
+		gsup_indicator[offset++] = FMAP_MSISDN;
+		bcd_lvlen = gsm48_encode_bcd_number(gsup_indicator + offset,
+						    32, 0, extension);
+
+		offset += bcd_lvlen;
+		msgb_put(msg, bcd_lvlen + 1);
+	}
+
+	if (component_data) {
+		msgb_put(msg, req->component_length);
+		memcpy(gsup_indicator + offset, component_data, req->component_length);
+	}
+
+	gsup_indicator[1] = offset + req->component_length - 2; //except GPRS_GSUP_MSGT_USSD_MAP and length field
+	return 0;
+#if 0
 	gsup_indicator[6] = req->component_type;
 
 	/* invokeId */
@@ -80,33 +110,56 @@ int subscr_uss_message(struct msgb *msg,
 	// gsup_indicator = msgb_push(msgb, 1);
 	// gsup_indicator[0] = GPRS_GSUP_MSGT_MAP;
 	return 0;
+#endif
 }
 
 
 
 int rx_uss_message_parse(const uint8_t* data,
 			 size_t len,
-			 struct ss_request *ss,
+			 struct ss_header *ss,
 			 uint32_t *pref,
 			 char* extention,
 			 size_t extention_len)
 {
-	const uint8_t* const_data = data;
+	uint8_t ext_len;
+	const uint8_t* const_data = data + 1; // Skip constant
 	uint32_t ref;
+	int total_len;
 
-	if (len < 8 + 3 + 3)
+	if (len < 7)
 		return -1;
 
 	/* skip GPRS_GSUP_MSGT_MAP */
-	ss->message_type = *(++const_data);
+	total_len        = *(const_data++);
+	ss->message_type = *(const_data++);
 
-	ref = ((uint32_t)(*(++const_data))) << 24;
-	ref = ((uint32_t)(*(++const_data))) << 16;
-	ref = ((uint32_t)(*(++const_data))) << 8;
-	ref = ((uint32_t)(*(++const_data)));
+	ref = ((uint32_t)(*(const_data++))) << 24;
+	ref |= ((uint32_t)(*(const_data++))) << 16;
+	ref |= ((uint32_t)(*(const_data++))) << 8;
+	ref |= ((uint32_t)(*(const_data++)));
 	if (pref)
 		*pref = ref;
 
+	total_len -= 4 + 1; // ref + sizeof(len)
+
+	if (*const_data == FMAP_MSISDN) {
+		ext_len = *(++const_data);
+		if (extention) {
+			gsm48_decode_bcd_number(extention,
+						extention_len,
+						const_data,
+						0);
+		}
+		const_data += ext_len + 1;
+		total_len -= ext_len + 2; // tag FMAP_MSISDN + sizeof(len)
+	}
+
+	ss->component_offset = const_data - data;
+	ss->component_length = total_len; //data[ss->component_offset + 1];
+
+	return 0;
+#if 0
 	ss->component_type = *(++const_data);
 
 	/* skip full len and move to component id */
@@ -155,4 +208,5 @@ int rx_uss_message_parse(const uint8_t* data,
 	}
 
 	return 0;
+#endif
 }
