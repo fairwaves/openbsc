@@ -52,7 +52,7 @@ enum gprs_gsup_iei {
 };
 
 enum gprs_gsup_message_type {
-    GPRS_GSUP_MSGT_MAP                      = 0b01111111,
+	GPRS_GSUP_MSGT_USSD_MAP			= 0b01111111,
 
 	GPRS_GSUP_MSGT_UPDATE_LOCATION_REQUEST	= 0b00000100,
 	GPRS_GSUP_MSGT_UPDATE_LOCATION_ERROR	= 0b00000101,

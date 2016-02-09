@@ -34,6 +34,7 @@ enum {
 	DSMPP,
 	DFILTER,
 	DSUP,
+	DSS,
 	Debug_LastEntry,
 };
 
