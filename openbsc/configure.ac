@@ -215,6 +215,7 @@ AC_OUTPUT(
     tests/trau/Makefile
     tests/sgsn/Makefile
     tests/subscr/Makefile
+    tests/ussd/Makefile
     doc/Makefile
     doc/examples/Makefile
     Makefile)
