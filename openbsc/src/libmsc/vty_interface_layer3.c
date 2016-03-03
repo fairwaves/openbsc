@@ -982,6 +982,7 @@ DEFUN(sms_destination, sms_destination_cmd,
 		vty_out(vty, "%%Cannot set up SMS socket%s", VTY_NEWLINE);
 		return CMD_WARNING;
 	}
+	gsmnet->sms_client->net = gsmnet;
 
 	return CMD_SUCCESS;
 }
