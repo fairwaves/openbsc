@@ -1,3 +1,9 @@
+openbsc (0.14.0-fw.11) trusty; urgency=low
+
+  * fairwaves internal build
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 20 Oct 2016 10:35:58 +0200
+
 openbsc (0.14.0-fw.10) trusty; urgency=low
 
   * sup: fix handling update location result message
