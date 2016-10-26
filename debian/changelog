@@ -1,3 +1,9 @@
+openbsc (0.14.0-fw.12) trusty; urgency=low
+
+  * USSD length fix
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Tue, 25 Oct 2016 15:52:58 +0530
+
 openbsc (0.14.0-fw.11) trusty; urgency=low
 
   * fairwaves internal build
