@@ -1,3 +1,9 @@
+openbsc (0.14.0-fw.13) trusty; urgency=low
+
+  * gsm_sup: check connection before use it, because it can be already closed
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 3 Nov 2016 20:11:58 +0530
+
 openbsc (0.14.0-fw.12) trusty; urgency=low
 
   * USSD length fix
