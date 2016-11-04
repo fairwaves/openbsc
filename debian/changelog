@@ -1,3 +1,10 @@
+openbsc (0.14.0-fw.14) trusty; urgency=low
+
+  * reg-proxy: free all allocated osip elements, messages and transactions
+  * reg-proxy: free allocated ipa control messages in ipa_sock_server_cb function
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 4 Nov 2016 10:32:58 +0530
+
 openbsc (0.14.0-fw.13) trusty; urgency=low
 
   * gsm_sup: check connection before use it, because it can be already closed
