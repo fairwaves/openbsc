@@ -1,3 +1,9 @@
+openbsc (0.14.0-fw.15) trusty; urgency=low
+
+  * reg-proxy: fix for memory leak fix
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 4 Nov 2016 20:21:58 +0530
+
 openbsc (0.14.0-fw.14) trusty; urgency=low
 
   * reg-proxy: free all allocated osip elements, messages and transactions
