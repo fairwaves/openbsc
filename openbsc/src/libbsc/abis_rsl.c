@@ -937,6 +937,8 @@ int rsl_lchan_set_state(struct gsm_lchan *lchan, int state)
 static int rsl_rx_chan_act_ack(struct msgb *msg)
 {
 	struct abis_rsl_dchan_hdr *rslh = msgb_l2(msg);
+	struct gsm_lchan *lchan = msg->lchan;
+	struct gsm_bts_trx_ts *ts = lchan->ts;
 
 	/* BTS has confirmed channel activation, we now need
 	 * to assign the activated channel to the MS */
@@ -945,9 +947,18 @@ static int rsl_rx_chan_act_ack(struct msgb *msg)
 
 	osmo_timer_del(&msg->lchan->act_timer);
 
-	if (msg->lchan->state == LCHAN_S_BROKEN) {
-		LOGP(DRSL, LOGL_NOTICE, "%s CHAN ACT ACK for broken channel.\n",
-			gsm_lchan_name(msg->lchan));
+	if (lchan->state == LCHAN_S_BROKEN) {
+		int do_release = is_sysmobts_v2(ts->trx->bts);
+		LOGP(DRSL, LOGL_NOTICE, "%s CHAN ACT ACK for broken channel. %s\n",
+			gsm_lchan_name(lchan),
+			do_release ? "Releasing it" : "Keeping it broken");
+		if (do_release) {
+			talloc_free(lchan->rqd_ref);
+			lchan->rqd_ref = NULL;
+			lchan->rqd_ta = 0;
+			rsl_lchan_set_state(msg->lchan, LCHAN_S_ACTIVE);
+			rsl_rf_chan_release(msg->lchan, 0, SACCH_NONE);
+		}
 		return 0;
 	}
 
