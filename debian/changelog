@@ -1,3 +1,9 @@
+openbsc (0.14.0-fw.16) trusty; urgency=low
+
+  * reg-proxy: fix for fix for memory leak fix
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 9 Nov 2016 02:52:58 +0530
+
 openbsc (0.14.0-fw.15) trusty; urgency=low
 
   * reg-proxy: fix for memory leak fix
