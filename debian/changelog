@@ -1,3 +1,9 @@
+openbsc (0.14.0-fw.17) trusty; urgency=low
+
+  * osmo-nitb: fixes channels that get stuck if osmo-bts <-> osmo-nitb traffic gets delayed
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 10 Nov 2016 11:26:58 +0200
+
 openbsc (0.14.0-fw.16) trusty; urgency=low
 
   * reg-proxy: fix for fix for memory leak fix
