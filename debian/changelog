@@ -1,3 +1,9 @@
+openbsc (0.14.0-fw.18) trusty; urgency=low
+
+  * gsm_04_08: Change reject cause for not "attached" subscribers from "destination out of order" to "no user responding"
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 1 Dec 2016 03:57:58 +0300
+
 openbsc (0.14.0-fw.17) trusty; urgency=low
 
   * osmo-nitb: fixes channels that get stuck if osmo-bts <-> osmo-nitb traffic gets delayed
