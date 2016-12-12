@@ -96,7 +96,6 @@ struct gsm_trans *trans_alloc(struct gsm_network *net,
 	trans->protocol = protocol;
 	trans->transaction_id = trans_id;
 	trans->callref = callref;
-	trans->callref_keep = callref;
 	trans->sms_local = 0;
 
 	trans->net = net;

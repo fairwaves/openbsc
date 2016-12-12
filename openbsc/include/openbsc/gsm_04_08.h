@@ -6,7 +6,6 @@
 #include <osmocom/gsm/protocol/gsm_04_08.h>
 
 #include <openbsc/meas_rep.h>
-#include <openbsc/mncc.h>
 
 struct msgb;
 struct gsm_bts;
@@ -89,8 +88,6 @@ void gsm48_lchan2chan_desc(struct gsm48_chan_desc *cd,
 
 void release_security_operation(struct gsm_subscriber_connection *conn);
 void allocate_security_operation(struct gsm_subscriber_connection *conn);
-
-int tch_frame_down(struct gsm_network *net, uint32_t callref, struct gsm_data_frame *data);
 
 int gsm0408_authorize(struct gsm_subscriber_connection *conn, struct msgb *msg);
 int gsm0408_loc_upd_rej(struct gsm_subscriber_connection *conn, uint8_t cause);
