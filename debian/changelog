@@ -1,3 +1,10 @@
+openbsc (0.14.0-fw.19) trusty; urgency=low
+
+  * better voice quality
+  * purge ms message
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 15 Dec 2016 13:29:58 +0300
+
 openbsc (0.14.0-fw.18) trusty; urgency=low
 
   * gsm_04_08: Change reject cause for not "attached" subscribers from "destination out of order" to "no user responding"
